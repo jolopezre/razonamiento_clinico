@@ -4,6 +4,7 @@
 # ==============================================================================
 from __future__ import annotations
 
+import hmac
 from datetime import datetime
 
 import pandas as pd
@@ -397,17 +398,40 @@ with tab_reg:
                                    f"{paciente.codigo_registro}.csv", "text/csv")
 
     st.divider()
-    st.markdown("##### Histórico consolidado")
-    try:
-        hist = almac.leer()
-    except Exception as exc:
-        hist = pd.DataFrame()
-        st.error(f"No se pudo leer el histórico: {exc}")
-    if hist.empty:
-        st.info("Aún no hay evaluaciones guardadas.")
+    st.markdown("##### 🔒 Histórico consolidado (acceso restringido)")
+    clave_admin = secreto("admin", "password")
+    if not clave_admin:
+        st.info("El histórico está deshabilitado. Configure `[admin] password` en los secrets para habilitarlo.")
+    elif not st.session_state.get("admin_ok"):
+        intentos = st.session_state.get("admin_intentos", 0)
+        if intentos >= 5:
+            st.error("Demasiados intentos fallidos. Recargue la página para reintentar.")
+        else:
+            with st.form("login_admin", clear_on_submit=True):
+                pwd = st.text_input("Contraseña de administrador", type="password")
+                if st.form_submit_button("Ingresar"):
+                    if hmac.compare_digest(pwd.encode(), str(clave_admin).encode()):
+                        st.session_state["admin_ok"] = True
+                        st.session_state["admin_intentos"] = 0
+                        st.rerun()
+                    else:
+                        st.session_state["admin_intentos"] = intentos + 1
+                        st.error("Contraseña incorrecta.")
+            st.caption("Solo el administrador puede ver y descargar los registros guardados.")
     else:
-        cols = [c for c in ["timestamp", "codigo_registro", "edad_meses", "foco", "phoenix_total",
-                            "psofa_total", "clasificacion", "esquema_sugerido"] if c in hist.columns]
-        st.dataframe(hist[cols], hide_index=True, width="stretch")
-        st.download_button("⬇️ Descargar histórico (CSV)", hist.to_csv(index=False).encode("utf-8"),
-                           "registro_evaluaciones.csv", "text/csv")
+        if st.button("Cerrar sesión de administrador"):
+            st.session_state["admin_ok"] = False
+            st.rerun()
+        try:
+            hist = almac.leer()
+        except Exception as exc:
+            hist = pd.DataFrame()
+            st.error(f"No se pudo leer el histórico: {exc}")
+        if hist.empty:
+            st.info("Aún no hay evaluaciones guardadas.")
+        else:
+            cols = [c for c in ["timestamp", "codigo_registro", "edad_meses", "foco", "phoenix_total",
+                                "psofa_total", "clasificacion", "esquema_sugerido"] if c in hist.columns]
+            st.dataframe(hist[cols], hide_index=True, width="stretch")
+            st.download_button("⬇️ Descargar histórico (CSV)", hist.to_csv(index=False).encode("utf-8"),
+                               "registro_evaluaciones.csv", "text/csv")
